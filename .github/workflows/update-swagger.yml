@@ -58,10 +58,15 @@ jobs:
         id: openai-openapi
         run: |
           yq --version >/dev/null 2>&1 || (echo "yq is not installed. Please install yq to run this workflow." && exit 1)
-          # Extract version from info.version
-          api_version=$(curl -sL https://raw.githubusercontent.com/openai/openai-openapi/master/openapi.yaml | yq -r '.info.version')
+          # downwload the openapi.yaml file from openai/openai-openapi repository
+          curl -sL https://raw.githubusercontent.com/openai/openai-openapi/master/openapi.yaml -o swagger.yaml
+          # Extract version from info.version from local file
+          api_version=$(yq -r '.info.version' swagger.yaml)
           echo "api_version=$api_version" >> $GITHUB_OUTPUT
-          
+          # exctract sha256sum of the openapi.yaml file
+          sha256sum=$(sha256sum swagger.yaml | awk '{print $1}')
+          echo "api_sha256sum=$sha256sum" >> $GITHUB_OUTPUT
+
           # Get current version from swagger.yaml
           if [ -f swagger.yaml ]; then
             current_version=$(yq -r '.info.version' swagger.yaml)
@@ -69,21 +74,26 @@ jobs:
           else
             echo "current_version=" >> $GITHUB_OUTPUT
           fi
-
-      - name: Update OpenAPI Spec
-        if: steps.openai-openapi.outputs.current_version != steps.openai-openapi.outputs.api_version
-        run: |
-          # Download the latest openapi.yaml from openai/openai-openapi repository
-          curl -sL -o swagger.yaml https://raw.githubusercontent.com/openai/openai-openapi/master/openapi.yaml
+          # Get current sha256sum from openai.sha256sum file
+          if [ -f openai.sha256sum ]; then
+            current_sha256sum=$(cat openai.sha256sum)
+            echo "current_sha256sum=$current_sha256sum" >> $GITHUB_OUTPUT
+            # Update the openai.sha256sum file with the new sha256sum
+            echo $sha256sum > openai.sha256sum
+          else
+            echo "current_sha256sum=" >> $GITHUB_OUTPUT
+          fi
 
       - name: Create OpenAI OpenAPI Update Pull Request
-        if: steps.openai-openapi.outputs.current_version != steps.openai-openapi.outputs.api_version
+        if: steps.openai-openapi.outputs.current_version != steps.openai-openapi.outputs.api_version || steps.openai-openapi.outputs.current_sha256sum != steps.openai-openapi.outputs.api_sha256sum
         uses: peter-evans/create-pull-request@v8
         with:
           commit-message: Update OpenAPI spec to ${{ steps.openai-openapi.outputs.api_version }}
           title: Update OpenAPI spec to ${{ steps.openai-openapi.outputs.api_version }}
           body: |
             Updates OpenAI OpenAPI specification to ${{ steps.openai-openapi.outputs.api_version }}
+
+            sha256sum changes from ${{ steps.openai-openapi.outputs.current_sha256sum }} to ${{ steps.openai-openapi.outputs.api_sha256sum }}
 
             This PR updates the OpenAPI specification based on the latest version from [openai/openai-openapi][1]
 
